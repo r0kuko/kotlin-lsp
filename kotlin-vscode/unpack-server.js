@@ -77,3 +77,60 @@ if (!fs.existsSync(libDir) || !fs.statSync(libDir).isDirectory()) {
 if (fs.existsSync(path.join(libDir, '..', 'EULA.txt'))) {
   console.log("##teamcity[addBuildTag 'EULA']");
 }
+
+// Native overlay: replace selected files under `server/lib/` with sideloaded
+// portable variants. Use case: ship rebuilt versions of native libraries that
+// the upstream JetBrains bundle hard-codes with CPU-specific instructions
+// (e.g. RocksDB's `librocksdbjni-win64.dll` compiled with BMI2, which crashes
+// with EXCEPTION_ILLEGAL_INSTRUCTION on Ivy Bridge and older CPUs).
+//
+// Layout: kotlin-vscode/native-overrides/<vsce-target>/<path-under-server/lib>
+//   e.g. native-overrides/win32-x64/rocksdbjni/librocksdbjni-win64.dll
+//
+// Activation:
+//   - VSCE_TARGET env var (set by buildExtension.sh) selects the platform
+//     subdirectory. When unset (dev builds), only `common/` is overlaid.
+//   - Override the search root via KOTLIN_LSP_NATIVE_OVERRIDES (absolute path).
+//
+// No-op when the overrides directory does not exist, so this is safe to leave
+// in place unconditionally.
+function applyNativeOverrides() {
+  const root = process.env.KOTLIN_LSP_NATIVE_OVERRIDES
+    || path.resolve(__dirname, 'native-overrides');
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return;
+
+  const platforms = ['common'];
+  if (process.env.VSCE_TARGET) platforms.push(process.env.VSCE_TARGET);
+
+  let replaced = 0;
+  for (const platform of platforms) {
+    const src = path.join(root, platform);
+    if (!fs.existsSync(src) || !fs.statSync(src).isDirectory()) continue;
+    replaced += overlayDir(src, libDir);
+  }
+  if (replaced > 0) {
+    console.log(`[unpack-server] native-overrides: replaced ${replaced} file(s) under ${libDir}`);
+  }
+}
+
+function overlayDir(srcDir, dstDir) {
+  let count = 0;
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = path.join(srcDir, entry.name);
+    const dstPath = path.join(dstDir, entry.name);
+    if (entry.isDirectory()) {
+      fs.mkdirSync(dstPath, { recursive: true });
+      count += overlayDir(srcPath, dstPath);
+    } else if (entry.isFile()) {
+      if (!fs.existsSync(dstPath)) {
+        console.warn(`[unpack-server] native-overrides: target missing, skipping ${dstPath}`);
+        continue;
+      }
+      fs.copyFileSync(srcPath, dstPath);
+      count++;
+    }
+  }
+  return count;
+}
+
+applyNativeOverrides();

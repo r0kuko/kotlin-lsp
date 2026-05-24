@@ -1,0 +1,7 @@
+# Binary overlays are produced locally by scripts/build-portable-*.sh and
+# should not be committed. Only the README documenting the mechanism is tracked.
+*.dll
+*.so
+*.so.*
+*.dylib
+*.jnilib
